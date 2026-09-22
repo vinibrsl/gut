@@ -24,3 +24,7 @@ gut-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Local project files.
+/PLAN.md
+/.tool-versions
