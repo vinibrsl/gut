@@ -27,8 +27,8 @@ jobs:
       - run: mix test
       - run: MIX_ENV=docs mix deps.get
       - run: MIX_ENV=docs mix docs --warnings-as-errors
-      - run: mix hex.build
+      - run: MIX_ENV=docs mix hex.build
       - name: Publish to Hex.pm
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-        run: mix hex.publish --yes
+        run: MIX_ENV=docs mix hex.publish --yes
