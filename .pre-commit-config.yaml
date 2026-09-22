@@ -1,0 +1,23 @@
+repos:
+  - repo: local
+    hooks:
+      - id: mix-format
+        name: mix format
+        entry: mix format --check-formatted
+        language: system
+        pass_filenames: false
+      - id: mix-compile
+        name: mix compile
+        entry: mix compile --warnings-as-errors
+        language: system
+        pass_filenames: false
+      - id: mix-credo
+        name: mix credo
+        entry: mix credo --strict
+        language: system
+        pass_filenames: false
+      - id: mix-test
+        name: mix test
+        entry: mix test
+        language: system
+        pass_filenames: false
