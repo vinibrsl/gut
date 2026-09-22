@@ -50,20 +50,20 @@ defmodule Gut.ReqLLM.Jev do
     }
   end
 
-  defp error(%ReqLLM.Error.API.Timeout{} = cause), do: error(:timeout, cause)
+  defp error(%{__struct__: ReqLLM.Error.API.Timeout} = cause), do: error(:timeout, cause)
 
-  defp error(%ReqLLM.Error.API.Request{status: status} = cause)
+  defp error(%{__struct__: ReqLLM.Error.API.Request, status: status} = cause)
        when status in [408, 504],
        do: error(:timeout, cause)
 
-  defp error(%ReqLLM.Error.API.Request{status: 429} = cause),
+  defp error(%{__struct__: ReqLLM.Error.API.Request, status: 429} = cause),
     do: error(:rate_limited, cause)
 
-  defp error(%ReqLLM.Error.API.Request{status: status} = cause)
+  defp error(%{__struct__: ReqLLM.Error.API.Request, status: status} = cause)
        when status in [401, 403],
        do: error(:unauthorized, cause)
 
-  defp error(%ReqLLM.Error.API.Request{cause: %{reason: :timeout}} = cause),
+  defp error(%{__struct__: ReqLLM.Error.API.Request, cause: %{reason: :timeout}} = cause),
     do: error(:timeout, cause)
 
   defp error(cause), do: error(:adapter_error, cause)

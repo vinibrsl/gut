@@ -8,21 +8,33 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: 1.20.4
+          otp-version: 28.1
+      - run: mix deps.get
+      - run: mix hex.audit
+      - run: mix compile --no-optional-deps --warnings-as-errors
+      - run: mix format --check-formatted
+      - run: mix credo --strict
+
+  test:
     name: Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - elixir: 1.14.5
-            otp: 25
-          - elixir: 1.15.8
-            otp: 26
-          - elixir: 1.16.3
-            otp: 26
-          - elixir: 1.17.3
+          - elixir: 1.18.5
             otp: 27
+          - elixir: 1.19.6
+            otp: 28.1
+          - elixir: 1.20.4
+            otp: 28.1
     steps:
       - uses: actions/checkout@v4
       - uses: erlef/setup-beam@v1
@@ -30,7 +42,5 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
       - run: mix deps.get
-      - run: mix format --check-formatted
       - run: mix compile --warnings-as-errors
-      - run: mix credo --strict
       - run: mix test

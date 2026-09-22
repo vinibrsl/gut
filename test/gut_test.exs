@@ -33,10 +33,23 @@ defmodule GutTest do
     @behaviour Gut.Adapter
 
     @impl true
-    def init([]), do: nil
+    def init(opts), do: Keyword.fetch!(opts, :expected)
 
     @impl true
-    def choose(~s({"answer":true}), _question, [{id, _}], nil), do: {:ok, id}
+    def choose(subject, _question, [{id, _}], subject), do: {:ok, id}
+  end
+
+  defmodule DerivedSubject do
+    @derive {Gut.Subject, only: [:visible]}
+    defstruct [:visible, :hidden]
+  end
+
+  defmodule CustomSubject do
+    defstruct [:value]
+
+    defimpl Gut.Subject do
+      def to_text(subject), do: "value=#{subject.value}"
+    end
   end
 
   defmodule ReturnAdapter do
@@ -88,7 +101,24 @@ defmodule GutTest do
 
     test "encodes non-string subjects as JSON" do
       assert {:ok, :yes} =
-               Gut.feel(%{answer: true}, "Is the answer true?", [:yes], adapter: SubjectAdapter)
+               Gut.feel(%{answer: true}, "Is the answer true?", [:yes],
+                 adapter: {SubjectAdapter, expected: ~s({"answer":true})}
+               )
+    end
+
+    test "uses derived and custom subject representations" do
+      assert {:ok, :yes} =
+               Gut.feel(
+                 %DerivedSubject{visible: "yes", hidden: "secret"},
+                 "Is it visible?",
+                 [:yes],
+                 adapter: {SubjectAdapter, expected: ~s({"visible":"yes"})}
+               )
+
+      assert {:ok, :yes} =
+               Gut.feel(%CustomSubject{value: 3}, "Which value?", [:yes],
+                 adapter: {SubjectAdapter, expected: "value=3"}
+               )
     end
 
     test "rejects invalid questions before calling the adapter" do

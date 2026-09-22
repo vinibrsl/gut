@@ -35,14 +35,16 @@ defmodule Gut do
 
   ## Subjects
 
-  Gut sends string subjects as plain text. It encodes all other subjects with
-  `Jason.encode/1`. Derive `Jason.Encoder` to control which struct fields the
-  adapter receives:
+  Gut sends string subjects as plain text. It encodes all other subjects as
+  JSON. Derive `Gut.Subject` to control which struct fields the adapter receives
+  without changing the struct's general JSON representation:
 
       defmodule Ticket do
-        @derive {Jason.Encoder, only: [:subject, :body]}
+        @derive {Gut.Subject, only: [:subject, :body]}
         defstruct [:subject, :body, :internal_notes]
       end
+
+  This also works with structs defined by `Ecto.Schema`.
 
   Gut treats the subject as untrusted data when it builds a prompt. This reduces
   accidental prompt confusion, but it does not prevent prompt injection.
@@ -82,7 +84,8 @@ defmodule Gut do
   Asks the configured adapter to choose the value that best answers `question`.
 
   `subject` can be a string or any value that implements `Jason.Encoder`.
-  `question` must be a non-empty string.
+  Structs can derive or implement `Gut.Subject` for a Gut-specific
+  representation. `question` must be a non-empty string.
 
   `choices` must contain between 1 and 100 choices. It can be:
 
@@ -223,17 +226,7 @@ defmodule Gut do
     {choices, value_by_id}
   end
 
-  defp encode_subject!(subject) when is_binary(subject), do: subject
-
-  defp encode_subject!(subject) do
-    case Jason.encode(subject) do
-      {:ok, encoded} ->
-        encoded
-
-      {:error, cause} ->
-        raise ArgumentError, "subject cannot be encoded as JSON: #{message(cause)}"
-    end
-  end
+  defp encode_subject!(subject), do: Gut.Subject.to_text(subject)
 
   defp adapter!(opts) do
     unless Keyword.keyword?(opts) do
@@ -293,7 +286,4 @@ defmodule Gut do
       cause: result
     }
   end
-
-  defp message(cause) when is_exception(cause), do: Exception.message(cause)
-  defp message(cause), do: inspect(cause)
 end
