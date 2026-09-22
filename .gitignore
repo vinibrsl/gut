@@ -28,3 +28,4 @@ gut-*.tar
 # Local project files.
 /PLAN.md
 /.tool-versions
+/.env

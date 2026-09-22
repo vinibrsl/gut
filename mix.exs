@@ -22,7 +22,6 @@ defmodule Gut.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:nx, "~> 1.0", optional: true},
       {:req_llm, "~> 1.24", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
