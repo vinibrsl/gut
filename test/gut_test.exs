@@ -1,6 +1,8 @@
 defmodule GutTest do
   use ExUnit.Case, async: true
 
+  alias Gut.Error
+
   defmodule PickAdapter do
     @behaviour Gut.Adapter
 
@@ -10,6 +12,19 @@ defmodule GutTest do
     @impl true
     def choose(_subject, _question, choices, index) do
       {id, _description} = Enum.at(choices, index)
+      {:ok, id}
+    end
+  end
+
+  defmodule DescriptionAdapter do
+    @behaviour Gut.Adapter
+
+    @impl true
+    def init(opts), do: Keyword.fetch!(opts, :description)
+
+    @impl true
+    def choose(_subject, _question, choices, description) do
+      {id, ^description} = Enum.find(choices, &(elem(&1, 1) == description))
       {:ok, id}
     end
   end
@@ -24,7 +39,7 @@ defmodule GutTest do
     def choose(~s({"answer":true}), _question, [{id, _}], nil), do: {:ok, id}
   end
 
-  defmodule InvalidAdapter do
+  defmodule ReturnAdapter do
     @behaviour Gut.Adapter
 
     @impl true
@@ -34,69 +49,180 @@ defmodule GutTest do
     def choose(_subject, _question, _choices, return), do: return
   end
 
-  test "returns the exact value selected from a list" do
-    choices = [:no, true, {:team, 3}]
+  defmodule UnexpectedAdapter do
+    @behaviour Gut.Adapter
 
-    assert {:ok, {:team, 3}} =
-             Gut.feel("ticket", "Which value?", choices, adapter: {PickAdapter, index: 2})
+    @impl true
+    def init(_opts), do: raise("adapter must not run")
+
+    @impl true
+    def choose(_subject, _question, _choices, _state), do: raise("adapter must not run")
   end
 
-  test "returns keyword keys and range members" do
-    assert {:ok, :technical} =
-             Gut.feel(
-               "ticket",
-               "Which team?",
-               [
-                 billing: "Payment problem",
-                 technical: "Product problem"
-               ],
-               adapter: {PickAdapter, index: 1}
-             )
+  describe "feel/4" do
+    test "returns the exact value selected from a list" do
+      choices = [:no, true, {:team, 3}, 1.0, 1]
 
-    assert {:ok, 4} =
-             Gut.feel("ticket", "How severe?", 1..5, adapter: {PickAdapter, index: 3})
-  end
+      assert {:ok, {:team, 3}} =
+               Gut.feel("ticket", "Which value?", choices, adapter: {PickAdapter, index: 2})
 
-  test "encodes non-string subjects as JSON" do
-    assert {:ok, :yes} =
-             Gut.feel(%{answer: true}, "Is the answer true?", [:yes], adapter: SubjectAdapter)
-  end
-
-  test "rejects invalid local input" do
-    opts = [adapter: PickAdapter]
-
-    assert_raise ArgumentError, ~r/non-empty string/, fn ->
-      Gut.feel("subject", "", [:yes], opts)
+      assert {:ok, 1} =
+               Gut.feel("ticket", "Which number?", choices, adapter: {PickAdapter, index: 4})
     end
 
-    assert_raise ArgumentError, ~r/must not be empty/, fn ->
-      Gut.feel("subject", "Question?", [], opts)
+    test "returns keyword keys and range members" do
+      assert {:ok, :technical} =
+               Gut.feel(
+                 "ticket",
+                 "Which team?",
+                 [
+                   billing: "Payment problem",
+                   technical: "Product problem"
+                 ],
+                 adapter: {DescriptionAdapter, description: "Product problem"}
+               )
+
+      assert {:ok, 4} =
+               Gut.feel("ticket", "How severe?", 1..5, adapter: {PickAdapter, index: 3})
     end
 
-    assert_raise ArgumentError, ~r/must be unique/, fn ->
-      Gut.feel("subject", "Question?", [:yes, :yes], opts)
+    test "encodes non-string subjects as JSON" do
+      assert {:ok, :yes} =
+               Gut.feel(%{answer: true}, "Is the answer true?", [:yes], adapter: SubjectAdapter)
     end
 
-    assert_raise ArgumentError, ~r/at most 100/, fn ->
-      Gut.feel("subject", "Question?", 1..101, opts)
+    test "rejects invalid questions before calling the adapter" do
+      opts = [adapter: UnexpectedAdapter]
+
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "", [:yes], opts) end
+      assert_raise ArgumentError, fn -> Gut.feel("subject", :question, [:yes], opts) end
+    end
+
+    test "rejects invalid choices before calling the adapter" do
+      opts = [adapter: UnexpectedAdapter]
+
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "Question?", [], opts) end
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "Question?", [:yes, :yes], opts) end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [yes: "Yes", yes: "Again"], opts)
+      end
+
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "Question?", [yes: true], opts) end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", Enum.to_list(1..101), opts)
+      end
+
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "Question?", 1..101, opts) end
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "Question?", %{yes: true}, opts) end
+    end
+
+    test "rejects subjects that Jason cannot encode before calling the adapter" do
+      assert_raise ArgumentError, fn ->
+        Gut.feel(self(), "Question?", [:yes], adapter: UnexpectedAdapter)
+      end
+    end
+
+    test "rejects malformed options and adapters" do
+      assert_raise ArgumentError, fn -> Gut.feel("subject", "Question?", [:yes], :invalid) end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [:yes], unknown: true)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [:yes], adapter: PickAdapter, adapter: PickAdapter)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [:yes], adapter: {PickAdapter, [:invalid]})
+      end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [:yes], adapter: String)
+      end
+
+      assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [:yes], adapter: :not_an_adapter)
+      end
+    end
+
+    test "reports an unknown choice ID" do
+      assert {:error, %Error{reason: :invalid_answer, cause: "missing"}} =
+               Gut.feel("subject", "Question?", [:yes],
+                 adapter: {ReturnAdapter, return: {:ok, "missing"}}
+               )
+    end
+
+    test "reports adapter contract violations" do
+      for result <- [{:ok, 0}, {:error, :failure}, :invalid] do
+        assert {:error, %Error{reason: :adapter_error, cause: ^result}} =
+                 Gut.feel("subject", "Question?", [:yes],
+                   adapter: {ReturnAdapter, return: result}
+                 )
+      end
+    end
+
+    test "returns adapter errors unchanged" do
+      error = %Error{reason: :timeout, message: "timed out", cause: :timeout}
+
+      assert {:error, ^error} =
+               Gut.feel("subject", "Question?", [:yes],
+                 adapter: {ReturnAdapter, return: {:error, error}}
+               )
     end
   end
 
-  test "rejects unknown IDs and invalid adapter results" do
-    assert {:error, %Gut.Error{reason: :invalid_answer, cause: "missing"}} =
-             Gut.feel("subject", "Question?", [:yes],
-               adapter: {InvalidAdapter, return: {:ok, "missing"}}
-             )
+  describe "feel!/4" do
+    test "returns the selected choice" do
+      assert Gut.feel!("subject", "Question?", [:yes], adapter: PickAdapter) == :yes
+    end
 
-    assert {:error, %Gut.Error{reason: :adapter_error, cause: :invalid}} =
-             Gut.feel("subject", "Question?", [:yes], adapter: {InvalidAdapter, return: :invalid})
+    test "raises adapter errors" do
+      error = %Error{reason: :timeout, message: "timed out", cause: :timeout}
+
+      assert_raise Error, "timed out", fn ->
+        Gut.feel!("subject", "Question?", [:yes],
+          adapter: {ReturnAdapter, return: {:error, error}}
+        )
+      end
+    end
+  end
+end
+
+defmodule Gut.ConfigurationTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    previous = Application.fetch_env(:gut, :adapter)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, adapter} -> Application.put_env(:gut, :adapter, adapter)
+        :error -> Application.delete_env(:gut, :adapter)
+      end
+    end)
   end
 
-  test "passes through adapter errors and raises them from feel!" do
-    error = %Gut.Error{reason: :timeout, message: "timed out", cause: :timeout}
-    opts = [adapter: {InvalidAdapter, return: {:error, error}}]
+  describe "adapter configuration" do
+    test "call configuration takes precedence over application configuration" do
+      Application.put_env(:gut, :adapter, {GutTest.PickAdapter, index: 1})
 
-    assert {:error, ^error} = Gut.feel("subject", "Question?", [:yes], opts)
-    assert_raise Gut.Error, "timed out", fn -> Gut.feel!("subject", "Question?", [:yes], opts) end
+      assert {:ok, :application} = Gut.feel("subject", "Question?", [:call, :application])
+
+      assert {:ok, :call} =
+               Gut.feel("subject", "Question?", [:call, :application],
+                 adapter: GutTest.PickAdapter
+               )
+    end
+
+    test "the default adapter requires configuration" do
+      Application.delete_env(:gut, :adapter)
+
+      assert_raise ArgumentError, ~r/requires a :model option/, fn ->
+        Gut.feel("subject", "Question?", [:yes])
+      end
+    end
   end
 end

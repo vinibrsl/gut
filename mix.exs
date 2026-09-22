@@ -23,7 +23,8 @@ defmodule Gut.MixProject do
     [
       {:jason, "~> 1.4"},
       {:req_llm, "~> 1.24", optional: true},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:plug, "~> 1.0", only: :test}
     ]
   end
 end
