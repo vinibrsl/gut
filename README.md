@@ -1,11 +1,8 @@
 # Gut
 
-Use LLM judgment in regular Elixir control flow. Gut turns subjective input into a fixed value your application can route, match, store, and act on.
+[Hex](https://hex.pm/packages/gut) · [Docs](https://hexdocs.pm/gut)
 
-- Route tickets, leads, and reports to the right workflow.
-- Classify intent, sentiment, topic, or risk.
-- Score urgency, quality, or severity on a bounded scale.
-- Automate clear cases and send uncertain work to a person.
+Gut is a simple DSL for LLM decisions in Elixir. It picks an Elixir value for your subject and question. No agent framework required, just a few lines of code and your LLM of choice.
 
 ```elixir
 ticket = %{
@@ -21,28 +18,9 @@ Gut.feel(ticket, "Which team should handle this?",
 #=> {:ok, :billing}
 ```
 
-Gut gives the model a fixed set of choices, then maps its answer back to the original value. Your application gets `:billing`, not a generated string that it still needs to parse.
-
-## What you can do
-
-Use Gut when the input is subjective but the result must be concrete:
-
-```elixir
-Gut.feel(review, "What is the sentiment?", [:positive, :neutral, :negative])
-#=> {:ok, :positive}
-
-Gut.feel(messages, "How frustrated is the customer?", 1..5)
-#=> {:ok, 4}
-
-Gut.feel(report, "Does this need manual review?", [true, false])
-#=> {:ok, true}
-```
-
-A successful result means the provider returned one of your choices. It does not mean the judgment is correct.
-
 ## Installation
 
-Add `gut` and `req_llm` to your dependencies:
+Add `gut` and `req_llm` to `mix.exs`:
 
 ```elixir
 def deps do
@@ -53,59 +31,67 @@ def deps do
 end
 ```
 
-Configure a model. For example, use a Jev evaluation model:
+Configure [`Gut.ReqLLM.Jev`](https://hexdocs.pm/gut/Gut.ReqLLM.Jev.html) to use a Jev evaluation model:
 
 ```elixir
 config :gut,
-  adapter: {Gut.ReqLLM.Jev, model: "typesafe:jev-latest"}
+  adapter: {Gut.ReqLLM.Jev,
+    model: "typesafe:jev-latest",
+    api_key: System.fetch_env!("TYPESAFE_API_KEY")}
 ```
 
-Or use `Gut.ReqLLM` with any LLM model supported by ReqLLM:
+Or use [`Gut.ReqLLM`](https://hexdocs.pm/gut/Gut.ReqLLM.html) with any ReqLLM-supported model:
 
 ```elixir
 config :gut,
-  adapter: {Gut.ReqLLM, model: "anthropic:claude-haiku-4-5"}
+  adapter: {Gut.ReqLLM,
+    model: "anthropic:claude-haiku-4-5",
+    api_key: System.fetch_env!("ANTHROPIC_API_KEY")}
 ```
 
-Options after `:model` pass through to `ReqLLM.generate_text/3`.
+With `Gut.ReqLLM`, options other than `:model` pass to `ReqLLM.generate_text/3`.
 
-## Choices
+You can also override the configured adapter for a single call:
 
-Pass a list when each value explains itself:
+```elixir
+Gut.feel(report, "Does this need manual review?", [true, false],
+  adapter: {Gut.ReqLLM,
+    model: "anthropic:claude-haiku-4-5",
+    api_key: System.fetch_env!("ANTHROPIC_API_KEY")}
+)
+```
+
+To use another provider or evaluation system, implement [`Gut.Adapter`](https://hexdocs.pm/gut/Gut.Adapter.html).
+
+## Usage
+
+Use a list when the choices need no descriptions:
 
 ```elixir
 Gut.feel(email, "Is this spam?", [true, false])
 ```
 
-Pass keyword choices when the model needs more context:
-
-```elixir
-Gut.feel(ticket, "Which team should handle this?",
-  billing: "Payment, invoice, or refund problems",
-  technical: "Product defects or access problems",
-  other: "Anything else"
-)
-```
-
-Pass an integer range for a bounded score:
+Use keyword choices when the model needs descriptions, as in the ticket example. An integer range works for scores:
 
 ```elixir
 Gut.feel(messages, "How frustrated is the customer?", 1..5)
 ```
 
-Gut returns the selected list value, keyword key, or range member. Choices must be unique and contain no more than 100 values.
+`Gut.feel/4` returns `{:error, %Gut.Error{}}` for provider and adapter failures. See [`Gut.Error`](https://hexdocs.pm/gut/Gut.Error.html) for error details. Use the `reason` field for control flow:
 
-Use `Gut.feel!/4` when a provider failure should raise:
+- `:timeout`
+- `:rate_limited`
+- `:unauthorized`
+- `:invalid_answer`
+- `:adapter_error`
 
-```elixir
-team = Gut.feel!(ticket, "Which team should handle this?", [:billing, :technical])
-```
+`cause` contains the original error for logging.
 
 ## Subjects
 
 Gut sends strings as plain text and encodes other values as JSON.
 
-Derive `Gut.Subject` to control which struct fields leave your application:
+For structs, derive [`Gut.Subject`](https://hexdocs.pm/gut/Gut.Subject.html) to limit the fields sent to the model:
 
 ```elixir
 defmodule Ticket do
@@ -114,45 +100,21 @@ defmodule Ticket do
 end
 ```
 
-Prefer `:only` so new fields are not sent by accident. You can also implement `Gut.Subject` when a subject needs a custom text representation.
-
-Gut treats the subject as untrusted data in its prompt. This reduces accidental prompt confusion, but it does not prevent prompt injection.
-
-## Errors
-
-`Gut.feel/4` returns `{:error, %Gut.Error{}}` for provider and adapter failures. The `reason` field is stable enough for control flow:
-
-- `:timeout`
-- `:rate_limited`
-- `:unauthorized`
-- `:invalid_answer`
-- `:adapter_error`
-
-The `cause` field keeps the original error for logging. Invalid local input raises `ArgumentError` before the adapter runs.
-
 ## Testing
 
-Use `Gut.Test` in `config/test.exs` to keep tests deterministic and prevent LLM requests:
+Use [`Gut.Test`](https://hexdocs.pm/gut/Gut.Test.html) in `config/test.exs` to run tests without LLM requests:
 
 ```elixir
 config :gut, adapter: Gut.Test
 ```
 
-It selects the first choice by default. Set a zero-based index when a test needs another result:
+It selects the first choice by default. Set a zero-based index to select another choice:
 
 ```elixir
 config :gut, adapter: {Gut.Test, index: 1}
 ```
 
-`Gut.Test` has no shared state, so tests can use `async: true`. Mock your application's domain boundary when individual tests need different judgments.
-
-## Custom adapters
-
-Implement the `Gut.Adapter` behaviour to use another provider or evaluation system. Configure the module globally or for one call:
-
-```elixir
-Gut.feel(subject, question, choices, adapter: MyApp.GutAdapter)
-```
+`Gut.Test` has no shared state, so tests can use `async: true`.
 
 ## Development
 
