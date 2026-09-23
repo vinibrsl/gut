@@ -31,6 +31,10 @@ def deps do
 end
 ```
 
+Choose one of these options to configure the adapter:
+
+### Option 1: Jev evaluation
+
 Configure [`Gut.ReqLLM.Jev`](https://hexdocs.pm/gut/Gut.ReqLLM.Jev.html) to use a Jev evaluation model:
 
 ```elixir
@@ -40,7 +44,9 @@ config :gut,
     api_key: System.fetch_env!("TYPESAFE_API_KEY")}
 ```
 
-Or use [`Gut.ReqLLM`](https://hexdocs.pm/gut/Gut.ReqLLM.html) with any ReqLLM-supported model:
+### Option 2: Other LLM models
+
+Use [`Gut.ReqLLM`](https://hexdocs.pm/gut/Gut.ReqLLM.html) with any ReqLLM-supported model:
 
 ```elixir
 config :gut,
@@ -51,15 +57,21 @@ config :gut,
 
 With `Gut.ReqLLM`, options other than `:model` pass to `ReqLLM.generate_text/3`.
 
-You can also override the configured adapter for a single call:
+### Option 3: Local models with Ollama
+
+Start [Ollama](https://hexdocs.pm/req_llm/ollama.html) and pull a model:
+
+```sh
+ollama pull llama3.2
+```
+
+Then use the same `Gut.ReqLLM` adapter. No API key is needed:
 
 ```elixir
-Gut.feel(report, "Does this need manual review?", [true, false],
-  adapter: {Gut.ReqLLM,
-    model: "anthropic:claude-haiku-4-5",
-    api_key: System.fetch_env!("ANTHROPIC_API_KEY")}
-)
+config :gut, adapter: {Gut.ReqLLM, model: "ollama:llama3.2"}
 ```
+
+Ollama must be running at its default address, `http://localhost:11434`. See the [ReqLLM Ollama guide](https://hexdocs.pm/req_llm/ollama.html) to use a different address.
 
 To use another provider or evaluation system, implement [`Gut.Adapter`](https://hexdocs.pm/gut/Gut.Adapter.html).
 
