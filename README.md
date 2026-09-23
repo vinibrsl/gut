@@ -65,16 +65,43 @@ To use another provider or evaluation system, implement [`Gut.Adapter`](https://
 
 ## Usage
 
-Use a list when the choices need no descriptions:
+Use a list when the choices need no descriptions. For example, sort incoming mail:
 
 ```elixir
-Gut.feel(email, "Is this spam?", [true, false])
+case Gut.feel(%{from: email.from, subject: email.subject, body: email.body},
+       "Is this spam?", [true, false]) do
+  {:ok, true} -> Mailbox.move(email, :spam)
+  {:ok, false} -> Mailbox.move(email, :inbox)
+  {:error, error} -> {:error, error}
+end
 ```
 
-Use keyword choices when the model needs descriptions, as in the ticket example. An integer range works for scores:
+Use keyword choices when the model needs descriptions. For example, route a ticket after loading it from the database:
 
 ```elixir
-Gut.feel(messages, "How frustrated is the customer?", 1..5)
+with %Ticket{} = ticket <- Repo.get(Ticket, id),
+     {:ok, team} <- Gut.feel(%{subject: ticket.subject, body: ticket.body},
+       "Which team should handle this?",
+       billing: "Payments, invoices, and refunds",
+       technical: "Product defects and access problems",
+       other: "Anything else"
+     ),
+     {:ok, ticket} <- Repo.update(Ecto.Changeset.change(ticket, team: Atom.to_string(team))) do
+  Support.notify_team(ticket)
+else
+  nil -> {:error, :not_found}
+  error -> error
+end
+```
+
+An integer range works for scores. For example, flag a conversation when the customer is frustrated:
+
+```elixir
+case Gut.feel(messages, "How frustrated is the customer?", 1..5) do
+  {:ok, score} when score >= 4 -> Support.flag_for_review(conversation_id)
+  {:ok, _score} -> :ok
+  {:error, error} -> {:error, error}
+end
 ```
 
 `Gut.feel/4` returns `{:error, %Gut.Error{}}` for provider and adapter failures. See [`Gut.Error`](https://hexdocs.pm/gut/Gut.Error.html) for error details. Use the `reason` field for control flow:
