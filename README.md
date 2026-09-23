@@ -73,7 +73,29 @@ config :gut, adapter: {Gut.ReqLLM, model: "ollama:llama3.2"}
 
 Ollama must be running at its default address, `http://localhost:11434`. See the [ReqLLM Ollama guide](https://hexdocs.pm/req_llm/ollama.html) to use a different address.
 
-To use another provider or evaluation system, implement [`Gut.Adapter`](https://hexdocs.pm/gut/Gut.Adapter.html).
+### Option 4: Custom adapter
+
+An adapter connects Gut to a decision system. Gut passes it the subject, question, and choices. The adapter returns the ID of the selected choice. Implement [`Gut.Adapter`](https://hexdocs.pm/gut/Gut.Adapter.html) to use your own model or service:
+
+```elixir
+defmodule MyApp.BumblebeeAdapter do
+  @behaviour Gut.Adapter
+
+  def init([]), do: nil
+
+  def choose(subject, _question, choices, _state) do
+    %{predictions: predictions} = Nx.Serving.batched_run(MyApp.Classifier, subject)
+    %{label: label} = Enum.max_by(predictions, & &1.score)
+
+    case Enum.find(choices, fn {_id, description} -> description == label end) do
+      {id, _} -> {:ok, id}
+      nil -> {:error, %Gut.Error{reason: :invalid_answer, message: "Unknown label"}}
+    end
+  end
+end
+
+config :gut, adapter: MyApp.BumblebeeAdapter
+```
 
 ## Usage
 
