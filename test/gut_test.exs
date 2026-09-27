@@ -161,6 +161,37 @@ defmodule GutTest do
                Gut.feel("ticket", "How severe?", 1..5, adapter: {PickAdapter, index: 3})
     end
 
+    test "offers abstention only when enabled" do
+      assert {:ok, :unsure} =
+               Gut.feel("unclear", "Which team?", [:billing, :technical],
+                 adapter: {PickAdapter, index: 2},
+                 allow_unsure: true
+               )
+
+      assert {:ok, :billing} =
+               Gut.feel("clear", "Which team?", [:billing],
+                 adapter: PickAdapter,
+                 allow_unsure: true
+               )
+
+      assert {:error, %Error{reason: :invalid_answer}} =
+               Gut.feel("unclear", "Which team?", [:billing],
+                 adapter: {ReturnAdapter, return: {:ok, "1"}}
+               )
+    end
+
+    test "reserves the unsure value only when uncertainty is enabled" do
+      assert {:ok, :unsure} =
+               Gut.feel("subject", "Question?", [:unsure], adapter: PickAdapter)
+
+      assert_raise ArgumentError, ~r/:unsure is reserved/, fn ->
+        Gut.feel("subject", "Question?", [yes: "Yes", unsure: "No decision"],
+          adapter: UnexpectedAdapter,
+          allow_unsure: true
+        )
+      end
+    end
+
     test "encodes non-string subjects as JSON" do
       assert {:ok, :yes} =
                Gut.feel(%{answer: true}, "Is the answer true?", [:yes],
@@ -224,6 +255,10 @@ defmodule GutTest do
       end
 
       assert_raise ArgumentError, fn ->
+        Gut.feel("subject", "Question?", [:yes], allow_unsure: :yes)
+      end
+
+      assert_raise ArgumentError, fn ->
         Gut.feel("subject", "Question?", [:yes], adapter: PickAdapter, adapter: PickAdapter)
       end
 
@@ -269,6 +304,13 @@ defmodule GutTest do
   describe "feel!/4" do
     test "returns the selected choice" do
       assert Gut.feel!("subject", "Question?", [:yes], adapter: PickAdapter) == :yes
+    end
+
+    test "returns abstention without raising" do
+      assert Gut.feel!("subject", "Question?", [:yes],
+               adapter: {PickAdapter, index: 1},
+               allow_unsure: true
+             ) == :unsure
     end
 
     test "raises adapter errors" do

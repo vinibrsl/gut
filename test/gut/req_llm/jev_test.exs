@@ -24,6 +24,22 @@ defmodule Gut.ReqLLM.JevTest do
                Gut.feel("subject", "Question?", [:no, :yes], adapter: adapter(plug))
     end
 
+    test "returns abstention from evaluation" do
+      plug = fn conn ->
+        Req.Test.json(conn, %{
+          "model" => "jev-latest",
+          "answers" => %{"choice" => %{"type" => "choice", "choice" => "2"}},
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1, "total_tokens" => 2}
+        })
+      end
+
+      assert {:ok, :unsure} =
+               Gut.feel("unclear", "Which team?", [:billing, :technical],
+                 adapter: adapter(plug),
+                 allow_unsure: true
+               )
+    end
+
     test "maps authorization failures" do
       for status <- [401, 403], do: assert_http_error(status, :unauthorized)
     end

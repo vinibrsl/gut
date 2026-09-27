@@ -103,9 +103,10 @@ Use a list when the choices need no descriptions. For example, sort incoming mai
 
 ```elixir
 case Gut.feel(%{from: email.from, subject: email.subject, body: email.body},
-       "Is this spam?", [true, false]) do
+       "Is this spam?", [true, false], allow_unsure: true) do
   {:ok, true} -> Mailbox.move(email, :spam)
   {:ok, false} -> Mailbox.move(email, :inbox)
+  {:ok, :unsure} -> Mailbox.flag_for_review(email)
   {:error, error} -> {:error, error}
 end
 ```
