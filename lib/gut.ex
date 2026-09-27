@@ -127,13 +127,45 @@ defmodule Gut do
     subject = encode_subject!(subject)
     {adapter, adapter_opts} = adapter!(opts)
     state = adapter.init(adapter_opts)
-
-    case adapter.choose(subject, question, adapter_choices, state) do
-      {:ok, id} when is_binary(id) -> selected_value(id, values)
-      {:error, %Gut.Error{} = error} -> {:error, error}
-      result -> {:error, adapter_error(result)}
-    end
+    choose(adapter, state, adapter_opts, subject, question, adapter_choices, values)
   end
+
+  defp choose(adapter, state, adapter_opts, subject, question, adapter_choices, values) do
+    metadata = %{adapter: adapter, model: Keyword.get(adapter_opts, :model)}
+    start = System.monotonic_time()
+    :telemetry.execute([:gut, :feel, :start], %{system_time: System.system_time()}, metadata)
+
+    result =
+      try do
+        adapter.choose(subject, question, adapter_choices, state)
+      catch
+        kind, reason ->
+          :telemetry.execute(
+            [:gut, :feel, :exception],
+            %{duration: System.monotonic_time() - start},
+            Map.put(metadata, :kind, kind)
+          )
+
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+
+    result = choose_result(result, values)
+
+    :telemetry.execute(
+      [:gut, :feel, :stop],
+      %{duration: System.monotonic_time() - start},
+      Map.put(metadata, :outcome, outcome(result))
+    )
+
+    result
+  end
+
+  defp choose_result({:ok, id}, values) when is_binary(id), do: selected_value(id, values)
+  defp choose_result({:error, %Gut.Error{} = error}, _values), do: {:error, error}
+  defp choose_result(result, _values), do: {:error, adapter_error(result)}
+
+  defp outcome({:ok, _}), do: :ok
+  defp outcome({:error, %Gut.Error{reason: reason}}), do: reason
 
   @doc """
   Asks the configured adapter to choose a value and returns it directly.

@@ -72,6 +72,68 @@ defmodule GutTest do
     def choose(_subject, _question, _choices, _state), do: raise("adapter must not run")
   end
 
+  defmodule RaisingAdapter do
+    @behaviour Gut.Adapter
+
+    @impl true
+    def init(_opts), do: nil
+
+    @impl true
+    def choose(_subject, _question, _choices, _state), do: raise("failed")
+  end
+
+  def handle_event(event, measurements, metadata, pid) do
+    send(pid, {event, measurements, metadata})
+  end
+
+  describe "telemetry" do
+    setup do
+      id = "gut-telemetry-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach_many(
+          id,
+          [[:gut, :feel, :start], [:gut, :feel, :stop], [:gut, :feel, :exception]],
+          &__MODULE__.handle_event/4,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+    end
+
+    test "reports successful adapter calls without input data" do
+      assert {:ok, :yes} =
+               Gut.feel("private subject", "private question", [:yes],
+                 adapter: {PickAdapter, model: "example:model"}
+               )
+
+      assert_receive {[:gut, :feel, :start], %{system_time: _}, metadata}
+      assert metadata == %{adapter: PickAdapter, model: "example:model"}
+      assert_receive {[:gut, :feel, :stop], %{duration: duration}, stop_metadata}
+      assert duration >= 0
+      assert stop_metadata == Map.put(metadata, :outcome, :ok)
+    end
+
+    test "reports errors and exceptions" do
+      assert {:error, %Error{reason: :invalid_answer}} =
+               Gut.feel("subject", "Question?", [:yes],
+                 adapter: {ReturnAdapter, return: {:ok, "missing"}}
+               )
+
+      assert_receive {[:gut, :feel, :start], _, _}
+      assert_receive {[:gut, :feel, :stop], _, %{outcome: :invalid_answer}}
+
+      assert_raise RuntimeError, "failed", fn ->
+        Gut.feel("subject", "Question?", [:yes], adapter: RaisingAdapter)
+      end
+
+      assert_receive {[:gut, :feel, :start], _, _}
+      assert_receive {[:gut, :feel, :exception], %{duration: duration}, metadata}
+      assert duration >= 0
+      assert metadata == %{adapter: RaisingAdapter, model: nil, kind: :error}
+    end
+  end
+
   describe "feel/4" do
     test "returns the exact value selected from a list" do
       choices = [:no, true, {:team, 3}, 1.0, 1]

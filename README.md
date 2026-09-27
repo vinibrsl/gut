@@ -177,6 +177,20 @@ config :gut, adapter: {Gut.Test, index: 1}
 
 `Gut.Test` has no shared state, so tests can use `async: true`.
 
+## Telemetry
+
+Gut emits these `:telemetry` events around `Gut.Adapter.choose/4`:
+
+| Event | Measurements | Additional metadata |
+| --- | --- | --- |
+| `[:gut, :feel, :start]` | `system_time` | — |
+| `[:gut, :feel, :stop]` | `duration` | `outcome` (`:ok` or a `Gut.Error` reason) |
+| `[:gut, :feel, :exception]` | `duration` | `kind` (`:error`, `:exit`, or `:throw`) |
+
+All events include `adapter` and `model` metadata. `duration` uses native time
+units. Gut does not emit subjects, questions, choices, errors, or stack traces.
+Validation and adapter initialization do not emit events.
+
 ## Development
 
 Gut requires Elixir 1.18 or later.

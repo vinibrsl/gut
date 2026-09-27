@@ -33,6 +33,7 @@ defmodule Gut.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
+      {:telemetry, "~> 1.0"},
       {:req_llm, "~> 1.24", optional: true},
       {:ex_doc, "~> 0.40", only: :docs, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
