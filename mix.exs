@@ -6,7 +6,7 @@ defmodule Gut.MixProject do
   def project do
     [
       app: :gut,
-      version: "0.1.0",
+      version: "0.2.0",
       description: "Use LLM judgment in regular Elixir control flow.",
       source_url: @source_url,
       docs: [main: "readme", extras: ["README.md"]],
