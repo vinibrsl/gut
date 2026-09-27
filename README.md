@@ -188,7 +188,7 @@ Tests can use `async: true`.
 
 ## Telemetry
 
-Gut emits these `:telemetry` events around `Gut.Adapter.choose/4`:
+Gut emits these `:telemetry` events:
 
 | Event | Measurements | Additional metadata |
 | --- | --- | --- |
