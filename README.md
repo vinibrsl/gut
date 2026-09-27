@@ -170,13 +170,21 @@ Use [`Gut.Test`](https://hexdocs.pm/gut/Gut.Test.html) in `config/test.exs` to r
 config :gut, adapter: Gut.Test
 ```
 
-It selects the first choice by default. Set a zero-based index to select another choice:
+It selects the first choice by default. To select another choice, register a
+stub in each test:
 
 ```elixir
-config :gut, adapter: {Gut.Test, index: 1}
+# in an async test
+Gut.Test.stub(fn _subject, question, _choices ->
+  if question == "Which team?", do: :technical, else: :billing
+end)
+
+assert MyApp.route(ticket) == :technical
 ```
 
-`Gut.Test` has no shared state, so tests can use `async: true`.
+Stubs must return an offered choice. They belong to the test process. Tasks
+started by that process can use them. Other processes need their own stub.
+Tests can use `async: true`.
 
 ## Telemetry
 
