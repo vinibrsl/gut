@@ -33,6 +33,10 @@ defmodule Gut do
   A successful result means that the adapter returned a valid choice. It does
   not mean that the judgment is correct.
 
+  Set `allow_unsure: true` to offer uncertainty as a choice. Gut returns
+  `{:ok, :unsure}` if the adapter selects it. The adapter may still select a
+  choice when it should be unsure.
+
   ## Subjects
 
   Gut sends string subjects as plain text. It encodes all other subjects as
@@ -78,6 +82,7 @@ defmodule Gut do
   """
 
   @max_choices 100
+  @unsure_description "Choose this if the subject does not provide enough information or none of the choices fits"
   @default_adapter {Gut.ReqLLM, []}
 
   @doc """
@@ -101,6 +106,8 @@ defmodule Gut do
     * `:adapter` - a `Gut.Adapter` module or a `{module, options}` tuple. It
       replaces the adapter from the `:gut` application configuration for this
       call.
+    * `:allow_unsure` - adds an unsure choice when `true`. Gut returns
+      `{:ok, :unsure}` if the adapter selects it. Defaults to `false`.
 
   Adapter and provider failures return `{:error, %Gut.Error{}}`. Invalid local
   input raises `ArgumentError` before the adapter runs.
@@ -125,7 +132,8 @@ defmodule Gut do
     validate_question!(question)
     {adapter_choices, values} = normalize_choices!(choices)
     subject = encode_subject!(subject)
-    {adapter, adapter_opts} = adapter!(opts)
+    {adapter, adapter_opts, allow_unsure} = adapter!(opts)
+    {adapter_choices, values} = maybe_allow_unsure!(adapter_choices, values, allow_unsure)
     state = adapter.init(adapter_opts)
     choose(adapter, state, adapter_opts, subject, question, adapter_choices, values)
   end
@@ -171,8 +179,8 @@ defmodule Gut do
   Asks the configured adapter to choose a value and returns it directly.
 
   This function accepts the same arguments and options as `feel/4`. It returns
-  the selected value on success and raises `Gut.Error` for an adapter or
-  provider failure. Invalid local input raises `ArgumentError`.
+  the selected value, including `:unsure` when enabled. It raises `Gut.Error`
+  for an adapter or provider failure. Invalid local input raises `ArgumentError`.
 
   ## Examples
 
@@ -260,18 +268,35 @@ defmodule Gut do
 
   defp encode_subject!(subject), do: Gut.Subject.to_text(subject)
 
+  defp maybe_allow_unsure!(choices, values, false), do: {choices, values}
+
+  defp maybe_allow_unsure!(choices, values, true) do
+    if Enum.any?(values, fn {_id, value} -> value == :unsure end) do
+      raise ArgumentError, ":unsure is reserved when allow_unsure is true"
+    end
+
+    id = Integer.to_string(length(choices))
+    {choices ++ [{id, @unsure_description}], Map.put(values, id, :unsure)}
+  end
+
   defp adapter!(opts) do
     unless Keyword.keyword?(opts) do
       raise ArgumentError, "options must be a keyword list"
     end
 
-    if Keyword.keys(opts) -- [:adapter] != [] or length(Keyword.get_values(opts, :adapter)) > 1 do
-      raise ArgumentError, "the only supported option is :adapter"
+    if Keyword.keys(opts) -- [:adapter, :allow_unsure] != [] or
+         length(Keyword.get_values(opts, :adapter)) > 1 or
+         length(Keyword.get_values(opts, :allow_unsure)) > 1 or
+         Keyword.get(opts, :allow_unsure, false) not in [true, false] do
+      raise ArgumentError, "supported options are :adapter and boolean :allow_unsure"
     end
 
-    opts
-    |> Keyword.get(:adapter, Application.get_env(:gut, :adapter, @default_adapter))
-    |> normalize_adapter!()
+    {adapter, adapter_opts} =
+      opts
+      |> Keyword.get(:adapter, Application.get_env(:gut, :adapter, @default_adapter))
+      |> normalize_adapter!()
+
+    {adapter, adapter_opts, Keyword.get(opts, :allow_unsure, false)}
   end
 
   defp normalize_adapter!(adapter) when is_atom(adapter), do: validate_adapter!(adapter, [])

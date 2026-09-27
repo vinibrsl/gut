@@ -26,6 +26,25 @@ defmodule Gut.ReqLLMTest do
                Gut.feel("subject", "Question?", [:no, :yes], adapter: adapter(plug))
     end
 
+    test "returns abstention from a structured choice" do
+      plug = fn conn ->
+        Req.Test.json(conn, %{
+          "id" => "response-test",
+          "model" => "gpt-4o-mini",
+          "status" => "completed",
+          "output_text" => Jason.encode!(%{"value" => "2"}),
+          "output" => [],
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        })
+      end
+
+      assert {:ok, :unsure} =
+               Gut.feel("unclear", "Which team?", [:billing, :technical],
+                 adapter: adapter(plug),
+                 allow_unsure: true
+               )
+    end
+
     test "maps authorization failures" do
       for status <- [401, 403], do: assert_http_error(status, :unauthorized)
     end
