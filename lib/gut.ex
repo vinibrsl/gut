@@ -157,7 +157,7 @@ defmodule Gut do
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
-    result = choose_result(result, values)
+    result = choose_result(result, values, adapter, state)
 
     :telemetry.execute(
       [:gut, :feel, :stop],
@@ -168,9 +168,21 @@ defmodule Gut do
     result
   end
 
-  defp choose_result({:ok, id}, values) when is_binary(id), do: selected_value(id, values)
-  defp choose_result({:error, %Gut.Error{} = error}, _values), do: {:error, error}
-  defp choose_result(result, _values), do: {:error, adapter_error(result)}
+  defp choose_result({:ok, {:gut_test_value, value}}, values, Gut.Test, _state) do
+    if Enum.any?(values, fn {_id, choice} -> choice === value end) do
+      {:ok, value}
+    else
+      raise ArgumentError, "Gut.Test stub value is not among the choices"
+    end
+  end
+
+  defp choose_result({:ok, id}, values, _adapter, _state) when is_binary(id),
+    do: selected_value(id, values)
+
+  defp choose_result({:error, %Gut.Error{} = error}, _values, _adapter, _state),
+    do: {:error, error}
+
+  defp choose_result(result, _values, _adapter, _state), do: {:error, adapter_error(result)}
 
   defp outcome({:ok, _}), do: :ok
   defp outcome({:error, %Gut.Error{reason: reason}}), do: reason
