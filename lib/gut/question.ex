@@ -32,7 +32,6 @@ defmodule Gut.Question do
       #=> {:ok, :billing}
   """
 
-  @typedoc false
   @type t :: %__MODULE__{
           question: String.t(),
           choices: nonempty_list(term()) | Range.t(),
