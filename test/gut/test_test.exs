@@ -3,9 +3,9 @@ defmodule Gut.TestTest do
 
   defmodule Router do
     def route(ticket) do
-      case Gut.feel!(ticket, "Which team?", [:billing, :technical], adapter: Gut.Test) do
-        :billing -> :invoice
-        :technical -> :repair
+      case Gut.feel(ticket, "Which team?", [:billing, :technical], adapter: Gut.Test) do
+        {:ok, :billing} -> :invoice
+        {:ok, :technical} -> :repair
       end
     end
   end

@@ -8,6 +8,15 @@ Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+* Add `defquestion` for reusable named questions
+
+### Security
+
+* Update Mint to 1.11.0 to fix CVE-2026-94194, CVE-2026-91043, and
+  CVE-2026-92103.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
