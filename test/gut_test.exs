@@ -134,6 +134,41 @@ defmodule GutTest do
     end
   end
 
+  describe "feel!/4" do
+    test "returns the selected value with call options" do
+      Gut.Test.stub(fn _, _, _ -> :yes end)
+
+      assert :yes = Gut.feel!("subject", "Question?", [:yes], adapter: Gut.Test)
+    end
+
+    test "returns unsure when enabled" do
+      assert :unsure =
+               Gut.feel!("subject", "Question?", [:yes],
+                 adapter: {PickAdapter, index: 1},
+                 allow_unsure: true
+               )
+    end
+
+    test "raises adapter errors unchanged" do
+      error = %Error{reason: :timeout, message: "timed out", cause: :timeout}
+
+      raised =
+        assert_raise Error, "timed out", fn ->
+          Gut.feel!("subject", "Question?", [:yes],
+            adapter: {ReturnAdapter, return: {:error, error}}
+          )
+        end
+
+      assert raised == error
+    end
+
+    test "rejects invalid input before calling the adapter" do
+      assert_raise ArgumentError, "question must be a non-empty string", fn ->
+        Gut.feel!("subject", "", [:yes], adapter: UnexpectedAdapter)
+      end
+    end
+  end
+
   describe "feel/4" do
     test "returns the exact value selected from a list" do
       choices = [:no, true, {:team, 3}, 1.0, 1]
@@ -300,29 +335,6 @@ defmodule GutTest do
                )
     end
   end
-
-  describe "feel!/4" do
-    test "returns the selected choice" do
-      assert Gut.feel!("subject", "Question?", [:yes], adapter: PickAdapter) == :yes
-    end
-
-    test "returns abstention without raising" do
-      assert Gut.feel!("subject", "Question?", [:yes],
-               adapter: {PickAdapter, index: 1},
-               allow_unsure: true
-             ) == :unsure
-    end
-
-    test "raises adapter errors" do
-      error = %Error{reason: :timeout, message: "timed out", cause: :timeout}
-
-      assert_raise Error, "timed out", fn ->
-        Gut.feel!("subject", "Question?", [:yes],
-          adapter: {ReturnAdapter, return: {:error, error}}
-        )
-      end
-    end
-  end
 end
 
 defmodule Gut.ConfigurationTest do
@@ -340,6 +352,12 @@ defmodule Gut.ConfigurationTest do
   end
 
   describe "adapter configuration" do
+    test "feel!/3 uses the application adapter" do
+      Application.put_env(:gut, :adapter, GutTest.PickAdapter)
+
+      assert :yes = Gut.feel!("subject", "Question?", [:yes])
+    end
+
     test "call configuration takes precedence over application configuration" do
       Application.put_env(:gut, :adapter, {GutTest.PickAdapter, index: 1})
 

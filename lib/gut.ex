@@ -81,9 +81,72 @@ defmodule Gut do
   configuration.
   """
 
-  @max_choices 100
-  @unsure_description "Choose this if the subject does not provide enough information or none of the choices fits"
   @default_adapter {Gut.ReqLLM, []}
+
+  @doc """
+  Calls a named question with the given subject.
+
+  Pass a `{module, name}` tuple. Define named
+  questions with `use Gut.Question` and `Gut.Question.defquestion/2`.
+
+  This function uses the question's adapter and `:allow_unsure` settings.
+  An adapter of `nil` uses the application adapter at call time.
+  Use `feel/3` to override these settings for one call.
+
+  Gut validates question fields before the adapter runs. Invalid fields raise
+  `ArgumentError`. Unknown question names raise `FunctionClauseError`.
+
+  ## Examples
+
+      defmodule Support do
+        use Gut.Question
+
+        defquestion :team,
+          question: "Which team?",
+          choices: [:billing, :technical]
+      end
+
+      Gut.feel(ticket, {Support, :team})
+      #=> {:ok, :billing}
+  """
+  @spec feel(term(), Gut.Question.t() | {module(), atom()}) ::
+          {:ok, term()} | {:error, Gut.Error.t()}
+  def feel(subject, question), do: feel(subject, question, [])
+
+  @doc """
+  Calls a question with options, or an inline question without options.
+
+  For named questions, `opts` accepts `:adapter` and
+  `:allow_unsure`. Call options override the question's settings. An adapter
+  of `nil` selects the application adapter. Call options cannot change the
+  question text or choices. See `feel/4` for option details.
+
+  For inline questions, pass the question string and choices as the second
+  and third arguments. This form uses the defaults described in `feel/4`.
+
+  ## Examples
+
+      Gut.feel(ticket, {Support, :team}, adapter: Gut.Test)
+      #=> {:ok, :billing}
+
+      Gut.feel(review, "What is the sentiment?", [:positive, :neutral, :negative])
+      #=> {:ok, :positive}
+  """
+  @spec feel(term(), Gut.Question.t() | {module(), atom()}, keyword()) ::
+          {:ok, term()} | {:error, Gut.Error.t()}
+  @spec feel(term(), String.t(), nonempty_list(term()) | Range.t()) ::
+          {:ok, term()} | {:error, Gut.Error.t()}
+  def feel(subject, {module, name}, opts) when is_atom(module) and is_atom(name) do
+    feel(subject, module.__gut_question__(name), opts)
+  end
+
+  def feel(subject, %Gut.Question{} = question, opts) do
+    validate_options!(opts)
+
+    run_question(subject, struct!(question, opts))
+  end
+
+  def feel(subject, question, choices), do: feel(subject, question, choices, [])
 
   @doc """
   Asks the configured adapter to choose the value that best answers `question`.
@@ -105,7 +168,7 @@ defmodule Gut do
 
     * `:adapter` - a `Gut.Adapter` module or a `{module, options}` tuple. It
       replaces the adapter from the `:gut` application configuration for this
-      call.
+      call. `nil` uses the application adapter.
     * `:allow_unsure` - adds an unsure choice when `true`. Gut returns
       `{:ok, :unsure}` if the adapter selects it. Defaults to `false`.
 
@@ -126,16 +189,52 @@ defmodule Gut do
       Gut.feel(messages, "How frustrated is the customer?", 1..5)
       #=> {:ok, 4}
   """
-  @spec feel(term(), String.t(), list() | Range.t(), keyword()) ::
+  @spec feel(term(), String.t(), nonempty_list(term()) | Range.t(), keyword()) ::
           {:ok, term()} | {:error, Gut.Error.t()}
-  def feel(subject, question, choices, opts \\ []) do
-    validate_question!(question)
-    {adapter_choices, values} = normalize_choices!(choices)
-    subject = encode_subject!(subject)
-    {adapter, adapter_opts, allow_unsure} = adapter!(opts)
-    {adapter_choices, values} = maybe_allow_unsure!(adapter_choices, values, allow_unsure)
+  def feel(subject, question, choices, opts) do
+    feel(subject, %Gut.Question{question: question, choices: choices}, opts)
+  end
+
+  @doc """
+  Asks the configured adapter to choose a value and returns it directly.
+
+  This function accepts the same arguments and options as `feel/4`. It returns
+  the selected value, including `:unsure` when enabled. It raises `Gut.Error`
+  for an adapter or provider failure. Invalid local input raises `ArgumentError`.
+
+  ## Examples
+
+      Gut.feel!(ticket, "Which team should handle this?",
+        billing: "Payment or invoice problems",
+        technical: "Product or access problems"
+      )
+      #=> :billing
+  """
+  @spec feel!(term(), String.t(), nonempty_list(term()) | Range.t(), keyword()) :: term()
+  def feel!(subject, question, choices, opts \\ []) do
+    case feel(subject, question, choices, opts) do
+      {:ok, choice} -> choice
+      {:error, error} -> raise error
+    end
+  end
+
+  defp run_question(subject, question) do
+    adapter =
+      case question.adapter do
+        nil -> Application.get_env(:gut, :adapter, @default_adapter)
+        adapter -> adapter
+      end
+
+    question = Gut.Question.validate!(%{question | adapter: adapter})
+    {adapter_choices, values} = normalize_choices(question.choices)
+    subject = Gut.Subject.to_text(subject)
+    {adapter, adapter_opts} = normalize_adapter(question.adapter)
+
+    {adapter_choices, values} =
+      maybe_allow_unsure(adapter_choices, values, question.allow_unsure)
+
     state = adapter.init(adapter_opts)
-    choose(adapter, state, adapter_opts, subject, question, adapter_choices, values)
+    choose(adapter, state, adapter_opts, subject, question.question, adapter_choices, values)
   end
 
   defp choose(adapter, state, adapter_opts, subject, question, adapter_choices, values) do
@@ -157,7 +256,7 @@ defmodule Gut do
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
-    result = choose_result(result, values, adapter, state)
+    result = choose_result(result, values, adapter)
 
     :telemetry.execute(
       [:gut, :feel, :stop],
@@ -168,7 +267,7 @@ defmodule Gut do
     result
   end
 
-  defp choose_result({:ok, {:gut_test_value, value}}, values, Gut.Test, _state) do
+  defp choose_result({:ok, {:gut_test_value, value}}, values, Gut.Test) do
     if Enum.any?(values, fn {_id, choice} -> choice === value end) do
       {:ok, value}
     else
@@ -176,99 +275,39 @@ defmodule Gut do
     end
   end
 
-  defp choose_result({:ok, id}, values, _adapter, _state) when is_binary(id),
+  defp choose_result({:ok, id}, values, _adapter) when is_binary(id),
     do: selected_value(id, values)
 
-  defp choose_result({:error, %Gut.Error{} = error}, _values, _adapter, _state),
+  defp choose_result({:error, %Gut.Error{} = error}, _values, _adapter),
     do: {:error, error}
 
-  defp choose_result(result, _values, _adapter, _state), do: {:error, adapter_error(result)}
+  defp choose_result(result, _values, _adapter), do: {:error, adapter_error(result)}
 
   defp outcome({:ok, _}), do: :ok
   defp outcome({:error, %Gut.Error{reason: reason}}), do: reason
 
-  @doc """
-  Asks the configured adapter to choose a value and returns it directly.
+  defp normalize_choices(choices) when is_list(choices) do
+    {values, descriptions} =
+      if Keyword.keyword?(choices) do
+        Enum.unzip(choices)
+      else
+        {choices, Enum.map(choices, &inspect/1)}
+      end
 
-  This function accepts the same arguments and options as `feel/4`. It returns
-  the selected value, including `:unsure` when enabled. It raises `Gut.Error`
-  for an adapter or provider failure. Invalid local input raises `ArgumentError`.
-
-  ## Examples
-
-      Gut.feel!(ticket, "Which team should handle this?",
-        billing: "Payment or invoice problems",
-        technical: "Product or access problems"
-      )
-      #=> :billing
-  """
-  @spec feel!(term(), String.t(), list() | Range.t(), keyword()) :: term()
-  def feel!(subject, question, choices, opts \\ []) do
-    case feel(subject, question, choices, opts) do
-      {:ok, choice} -> choice
-      {:error, error} -> raise error
-    end
+    build_choices(values, descriptions)
   end
 
-  defp validate_question!(question) when is_binary(question) and byte_size(question) > 0,
-    do: :ok
-
-  defp validate_question!(_question),
-    do: raise(ArgumentError, "question must be a non-empty string")
-
-  defp normalize_choices!(choices) when is_list(choices) do
-    validate_choice_count!(choices)
-
-    if Keyword.keyword?(choices) do
-      normalize_keyword_choices!(choices)
-    else
-      normalize_value_choices!(choices)
-    end
-  end
-
-  defp normalize_choices!(%Range{} = choices) do
+  defp normalize_choices(%Range{} = choices) do
     choices
-    |> Enum.take(@max_choices + 1)
-    |> normalize_value_choices!()
-  end
-
-  defp normalize_choices!(_choices),
-    do: raise(ArgumentError, "choices must be a non-empty list, keyword list, or integer range")
-
-  defp normalize_keyword_choices!(choices) do
-    unless Enum.all?(choices, fn {_key, description} -> is_binary(description) end) do
-      raise ArgumentError, "keyword choice descriptions must be strings"
-    end
-
-    values = Enum.map(choices, &elem(&1, 0))
-    validate_unique!(values)
-    build_choices(values, Enum.map(choices, &elem(&1, 1)))
-  end
-
-  defp normalize_value_choices!(choices) do
-    validate_choice_count!(choices)
-    validate_unique!(choices)
-    build_choices(choices, Enum.map(choices, &inspect/1))
-  end
-
-  defp validate_choice_count!([]), do: raise(ArgumentError, "choices must not be empty")
-
-  defp validate_choice_count!(choices) when length(choices) > @max_choices,
-    do: raise(ArgumentError, "choices must contain at most #{@max_choices} values")
-
-  defp validate_choice_count!(_choices), do: :ok
-
-  defp validate_unique!(choices) do
-    if MapSet.size(MapSet.new(choices)) != length(choices) do
-      raise ArgumentError, "choices must be unique"
-    end
+    |> Enum.to_list()
+    |> normalize_choices()
   end
 
   defp build_choices(values, descriptions) do
     choices =
-      descriptions
-      |> Enum.with_index()
-      |> Enum.map(fn {description, index} -> {Integer.to_string(index), description} end)
+      Enum.with_index(descriptions, fn description, index ->
+        {Integer.to_string(index), description}
+      end)
 
     value_by_id =
       values
@@ -278,51 +317,33 @@ defmodule Gut do
     {choices, value_by_id}
   end
 
-  defp encode_subject!(subject), do: Gut.Subject.to_text(subject)
+  defp maybe_allow_unsure(choices, values, false), do: {choices, values}
 
-  defp maybe_allow_unsure!(choices, values, false), do: {choices, values}
-
-  defp maybe_allow_unsure!(choices, values, true) do
-    if Enum.any?(values, fn {_id, value} -> value == :unsure end) do
-      raise ArgumentError, ":unsure is reserved when allow_unsure is true"
-    end
-
+  defp maybe_allow_unsure(choices, values, true) do
     id = Integer.to_string(length(choices))
-    {choices ++ [{id, @unsure_description}], Map.put(values, id, :unsure)}
+
+    {choices ++
+       [
+         {id,
+          "Choose this if the subject does not provide enough information or none of the choices fits"}
+       ], Map.put(values, id, :unsure)}
   end
 
-  defp adapter!(opts) do
+  defp validate_options!(opts) do
     unless Keyword.keyword?(opts) do
       raise ArgumentError, "options must be a keyword list"
     end
 
-    if Keyword.keys(opts) -- [:adapter, :allow_unsure] != [] or
-         length(Keyword.get_values(opts, :adapter)) > 1 or
-         length(Keyword.get_values(opts, :allow_unsure)) > 1 or
-         Keyword.get(opts, :allow_unsure, false) not in [true, false] do
+    keys = Keyword.keys(opts)
+
+    if keys -- [:adapter, :allow_unsure] != [] or keys != Enum.uniq(keys) do
       raise ArgumentError, "supported options are :adapter and boolean :allow_unsure"
     end
-
-    {adapter, adapter_opts} =
-      opts
-      |> Keyword.get(:adapter, Application.get_env(:gut, :adapter, @default_adapter))
-      |> normalize_adapter!()
-
-    {adapter, adapter_opts, Keyword.get(opts, :allow_unsure, false)}
   end
 
-  defp normalize_adapter!(adapter) when is_atom(adapter), do: validate_adapter!(adapter, [])
+  defp normalize_adapter(adapter) when is_atom(adapter), do: validate_adapter!(adapter, [])
 
-  defp normalize_adapter!({adapter, opts}) when is_atom(adapter) and is_list(opts) do
-    unless Keyword.keyword?(opts) do
-      raise ArgumentError, "adapter options must be a keyword list"
-    end
-
-    validate_adapter!(adapter, opts)
-  end
-
-  defp normalize_adapter!(_adapter),
-    do: raise(ArgumentError, "adapter must be a module or a {module, options} tuple")
+  defp normalize_adapter({adapter, opts}), do: validate_adapter!(adapter, opts)
 
   defp validate_adapter!(adapter, opts) do
     if Code.ensure_loaded?(adapter) and function_exported?(adapter, :init, 1) and
